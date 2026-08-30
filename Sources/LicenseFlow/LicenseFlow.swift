@@ -56,15 +56,15 @@ public class LicenseFlowClient {
 
     public func activate(licenseKey: String, fingerprint: String? = nil) async throws -> LicenseLease {
         let fp = fingerprint ?? Self.getDeviceFingerprint()
-        let url = URL(string: "\(baseUrl)/licenses/activate")!
+        let url = URL(string: "\(baseUrl)/activate-license")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if !apiKey.isEmpty {
-            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
         }
 
-        let body: [String: Any] = ["key": licenseKey, "fingerprint": fp]
+        let body: [String: Any] = ["licenseKey": licenseKey, "deviceId": fp]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -75,14 +75,18 @@ public class LicenseFlowClient {
         return try JSONDecoder().decode(LicenseLease.self, from: data)
     }
 
-    public func resolveForIdentity(authToken: String, organizationId: String, productId: String) async throws -> [String: Any] {
-        let url = URL(string: "\(baseUrl)/entitlements/resolve-identity")!
+    public func resolveForIdentity(email: String, productId: String? = nil, environmentId: String? = nil) async throws -> [String: Any] {
+        let url = URL(string: "\(baseUrl)/resolve-entitlements")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
+        if !apiKey.isEmpty {
+            request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        }
 
-        let body: [String: String] = ["organization_id": organizationId, "product_id": productId]
+        var body: [String: String] = ["email": email]
+        if let pid = productId { body["productId"] = pid }
+        if let eid = environmentId { body["environmentId"] = eid }
         request.httpBody = try JSONEncoder().encode(body)
 
         let (data, _) = try await URLSession.shared.data(for: request)
