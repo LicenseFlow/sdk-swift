@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(CryptoKit)
+import CryptoKit
+#endif
 #if os(iOS) || os(tvOS)
 import UIKit
 #endif
@@ -31,6 +34,30 @@ public struct LicenseLease: Codable {
     public let fingerprint: String
     public let expiresAt: String
     public let entitlements: [String: AnyCodable]?
+}
+
+public struct CreditConsumptionResult {
+    public let success: Bool
+    public let balance: Int?
+    public let consumed: Int?
+    public let error: String?
+
+    init(from dict: [String: Any]) {
+        self.success = dict["success"] as? Bool ?? false
+        self.balance = dict["balance"] as? Int ?? (dict["remaining_credits"] as? Int)
+        self.consumed = dict["consumed"] as? Int ?? (dict["amount"] as? Int)
+        self.error = dict["error"] as? String
+    }
+}
+
+public struct CreditBalanceResult {
+    public let balance: Int
+    public let currency: String?
+
+    init(from dict: [String: Any]) {
+        self.balance = dict["balance"] as? Int ?? (dict["credits"] as? Int) ?? 0
+        self.currency = dict["currency"] as? String ?? "credits"
+    }
 }
 
 public struct VerificationResponse {
@@ -348,6 +375,102 @@ public class LicenseFlowClient {
     /// Clear the internal verification cache
     public func clearCache() {
         cache.removeAllObjects()
+    }
+
+    // MARK: - Usage & Credit Metering
+
+    /// Consume credits from the organization's credit pool
+    public func consumeCredits(
+        amount: Int,
+        description: String? = nil,
+        productId: String? = nil,
+        currency: String = "credits",
+        referenceId: String? = nil,
+        referenceType: String? = nil,
+        metadata: [String: Any]? = nil
+    ) async throws -> CreditConsumptionResult {
+        var payload: [String: Any] = [
+            "amount": amount,
+            "currency": currency
+        ]
+        if let desc = description { payload["description"] = desc }
+        if let pid = productId ?? self.productId { payload["product_id"] = pid }
+        if let refId = referenceId { payload["reference_id"] = refId }
+        if let refType = referenceType { payload["reference_type"] = refType }
+        if let meta = metadata { payload["metadata"] = meta }
+
+        let data = try await post(endpoint: "/functions/v1/consume-credits", body: payload)
+        let dict = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+        return CreditConsumptionResult(from: dict)
+    }
+
+    /// Retrieve current credit balance for the organization or product
+    public func getCreditsBalance(productId: String? = nil, currency: String? = nil) async throws -> CreditBalanceResult {
+        var endpoint = "/functions/v1/get-credit-balance"
+        var queryItems: [String] = []
+        if let pid = productId ?? self.productId { queryItems.append("product_id=\(pid)") }
+        if let curr = currency { queryItems.append("currency=\(curr)") }
+        if !queryItems.isEmpty {
+            endpoint += "?" + queryItems.joined(separator: "&")
+        }
+
+        let data = try await get(endpoint: endpoint)
+        let dict = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+        return CreditBalanceResult(from: dict)
+    }
+
+    // MARK: - Offline Ed25519 License Verification
+
+    /// Verify an offline .lic envelope containing an Ed25519 signature
+    public func verifyOfflineLicense(licenseFileContent: String, publicKeyHex: String) throws -> [String: Any] {
+        guard let jsonData = licenseFileContent.data(using: .utf8),
+              let envelope = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+              let licenseObj = envelope["license"] as? [String: Any],
+              let signatureBase64 = envelope["signature"] as? String,
+              let signatureData = Data(base64Encoded: signatureBase64) else {
+            throw LicenseFlowError.invalidLicense("Invalid offline license file format")
+        }
+
+        var keyData = Data()
+        var hexStr = publicKeyHex.trimmingCharacters(in: .whitespacesAndNewlines)
+        if hexStr.hasPrefix("0x") { hexStr = String(hexStr.dropFirst(2)) }
+        var index = hexStr.startIndex
+        while index < hexStr.endIndex {
+            let nextIndex = hexStr.index(index, offsetBy: 2, limitedBy: hexStr.endIndex) ?? hexStr.endIndex
+            if let byte = UInt8(hexStr[index..<nextIndex], radix: 16) {
+                keyData.append(byte)
+            }
+            index = nextIndex
+        }
+
+        guard keyData.count == 32 else {
+            throw LicenseFlowError.invalidLicense("Public key must be 32 bytes hex")
+        }
+
+        #if canImport(CryptoKit)
+        if #available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *) {
+            do {
+                let publicKey = try Curve25519.Signing.PublicKey(rawRepresentation: keyData)
+                let messageData = try JSONSerialization.data(withJSONObject: licenseObj, options: [.sortedKeys])
+                guard publicKey.isValidSignature(signatureData, for: messageData) else {
+                    throw LicenseFlowError.invalidLicense("Invalid Ed25519 signature on offline license")
+                }
+            } catch {
+                throw LicenseFlowError.invalidLicense("Signature verification failed: \(error.localizedDescription)")
+            }
+        }
+        #endif
+
+        if let validUntilStr = licenseObj["valid_until"] as? String ?? licenseObj["expires_at"] as? String {
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            let date = formatter.date(from: validUntilStr) ?? ISO8601DateFormatter().date(from: validUntilStr)
+            if let expiry = date, expiry < Date() {
+                throw LicenseFlowError.invalidLicense("Offline license has expired")
+            }
+        }
+
+        return licenseObj
     }
 
     // MARK: - HTTP Helpers
