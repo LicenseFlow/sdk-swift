@@ -480,7 +480,9 @@ public class LicenseFlowClient {
         if let canonical = LicenseFlowEndpoints.canonicalURL(baseUrl: baseUrl, endpoint: endpoint) {
             let (data, response) = try await send(url: canonical, body: body)
             // Fall back once to the legacy path if the gateway does not know it.
-            if (response as? HTTPURLResponse)?.statusCode != 404 {
+            // A 404 from the gateway itself has no X-LicenseFlow-Route header.
+            let http = response as? HTTPURLResponse
+            if http?.statusCode != 404 || http?.value(forHTTPHeaderField: "X-LicenseFlow-Route") != nil {
                 try handleHTTPResponse(response, data: data)
                 return data
             }
