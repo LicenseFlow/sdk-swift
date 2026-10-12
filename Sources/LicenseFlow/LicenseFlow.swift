@@ -476,7 +476,21 @@ public class LicenseFlowClient {
     // MARK: - HTTP Helpers
 
     private func post(endpoint: String, body: Any) async throws -> Data {
-        let url = URL(string: "\(baseUrl)\(endpoint)")!
+        let legacy = URL(string: "\(baseUrl)\(endpoint)")!
+        if let canonical = LicenseFlowEndpoints.canonicalURL(baseUrl: baseUrl, endpoint: endpoint) {
+            let (data, response) = try await send(url: canonical, body: body)
+            // Fall back once to the legacy path if the gateway does not know it.
+            if (response as? HTTPURLResponse)?.statusCode != 404 {
+                try handleHTTPResponse(response, data: data)
+                return data
+            }
+        }
+        let (data, response) = try await send(url: legacy, body: body)
+        try handleHTTPResponse(response, data: data)
+        return data
+    }
+
+    private func send(url: URL, body: Any) async throws -> (Data, URLResponse) {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -490,9 +504,7 @@ public class LicenseFlowClient {
             request.httpBody = try JSONEncoder().encode(body as! Encodable as! [String: String])
         }
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-        try handleHTTPResponse(response, data: data)
-        return data
+        return try await URLSession.shared.data(for: request)
     }
 
     private func get(endpoint: String) async throws -> Data {
