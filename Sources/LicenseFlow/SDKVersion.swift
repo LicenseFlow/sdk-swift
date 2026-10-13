@@ -7,7 +7,7 @@ import Foundation
 /// `sdk-swift-v<semver>` tag matches the shipped package.
 public enum LicenseFlowSDK {
     /// Semantic version of this package.
-    public static let version = "2.2.0"
+    public static let version = "2.3.0"
 
     /// User-Agent sent with every LicenseFlow API request.
     public static var userAgent: String {
