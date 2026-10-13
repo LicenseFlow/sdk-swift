@@ -3,6 +3,13 @@
 All notable changes to the iOS / macOS / tvOS / watchOS SDK.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [2.3.0] - 2026-10-13
+
+### Changed
+- Core calls (verify, activate, deactivate, checkout, lease status, offline, usage, entitlements, authorize) use the new canonical API addresses on api.licenseflow.dev, e.g. `/v1/licenses/verify`.
+- If the gateway does not recognise a new address it falls back once to the legacy path. Self-hosted and direct backend URLs keep using legacy paths.
+- Legacy paths remain supported indefinitely; no code changes are required.
+
 ## [2.2.0] - 2026-09-03
 
 ### Features
