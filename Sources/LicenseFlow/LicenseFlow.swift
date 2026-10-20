@@ -155,6 +155,7 @@ public struct AnyCodable: Codable {
 // MARK: - Client
 
 public class LicenseFlowClient {
+    public let auditLog = LicenseFlowAuditLog()
     private let apiKey: String
     private let baseUrl: String
     private let cache = NSCache<NSString, NSDictionary>()
