@@ -476,18 +476,29 @@ public class LicenseFlowClient {
     // MARK: - HTTP Helpers
 
     private func post(endpoint: String, body: Any) async throws -> Data {
+        let started = Date()
+        var auditStatus = 0
+        var auditRequestId: String?
+        let payload = body as? [String: Any]
+        defer {
+            auditLog.write(action: endpoint.components(separatedBy: "?")[0].split(separator: "/").prefix(3).joined(separator: "."), license: payload?["license_key"] as? String ?? payload?["licenseKey"] as? String, status: auditStatus, duration: Int(Date().timeIntervalSince(started) * 1000), requestId: auditRequestId)
+        }
         let legacy = URL(string: "\(baseUrl)\(endpoint)")!
         if let canonical = LicenseFlowEndpoints.canonicalURL(baseUrl: baseUrl, endpoint: endpoint) {
             let (data, response) = try await send(url: canonical, body: body)
             // Fall back once to the legacy path if the gateway does not know it.
             // A 404 from the gateway itself has no X-LicenseFlow-Route header.
             let http = response as? HTTPURLResponse
+            auditStatus = http?.statusCode ?? 0
+            auditRequestId = http?.value(forHTTPHeaderField: "x-request-id")
             if http?.statusCode != 404 || http?.value(forHTTPHeaderField: "X-LicenseFlow-Route") != nil {
                 try handleHTTPResponse(response, data: data)
                 return data
             }
         }
         let (data, response) = try await send(url: legacy, body: body)
+        auditStatus = (response as? HTTPURLResponse)?.statusCode ?? 0
+        auditRequestId = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "x-request-id")
         try handleHTTPResponse(response, data: data)
         return data
     }
@@ -510,6 +521,10 @@ public class LicenseFlowClient {
     }
 
     private func get(endpoint: String) async throws -> Data {
+        let started = Date()
+        var auditStatus = 0
+        var auditRequestId: String?
+        defer { auditLog.write(action: endpoint.components(separatedBy: "?")[0].split(separator: "/").prefix(3).joined(separator: "."), license: nil, status: auditStatus, duration: Int(Date().timeIntervalSince(started) * 1000), requestId: auditRequestId) }
         let url = URL(string: "\(baseUrl)\(endpoint)")!
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
@@ -519,6 +534,8 @@ public class LicenseFlowClient {
         }
 
         let (data, response) = try await URLSession.shared.data(for: request)
+        auditStatus = (response as? HTTPURLResponse)?.statusCode ?? 0
+        auditRequestId = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "x-request-id")
         try handleHTTPResponse(response, data: data)
         return data
     }
